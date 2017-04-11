@@ -58,7 +58,6 @@ public:
     void updateHook();
 
     std::string getDiag() const;
-    bool inCollision() const;
 
 private:
 
@@ -86,6 +85,8 @@ private:
     std::vector<KDL::Frame > links_fk_;
 
     int collisions_;
+
+    bool in_collision_;
 };
 
 template<unsigned int N, unsigned int Npairs >
@@ -95,6 +96,7 @@ CollisionDetectorComponent<N, Npairs >::CollisionDetectorComponent(const std::st
     , port_col_out_("col_OUTPORT")
     , activation_dist_(0.0)
     , collisions_(0)
+    , in_collision_(false)
 {
     this->ports()->addPort(port_q_in_);
     this->ports()->addPort(port_col_out_);
@@ -105,7 +107,7 @@ CollisionDetectorComponent<N, Npairs >::CollisionDetectorComponent(const std::st
     this->addProperty("joint_names", joint_names_);
 
     this->addOperation("getDiag", &CollisionDetectorComponent<N, Npairs >::getDiag, this, RTT::ClientThread);
-    this->addOperation("inCollision", &CollisionDetectorComponent<N, Npairs >::inCollision, this, RTT::ClientThread);
+    this->addAttribute("inCollision", in_collision_);
 
     col_.resize(Npairs);
     q_.resize(N);
@@ -204,11 +206,6 @@ std::string CollisionDetectorComponent<N, Npairs >::getDiag() const {
 }
 
 template<unsigned int N, unsigned int Npairs >
-bool CollisionDetectorComponent<N, Npairs >::inCollision() const {
-    return collisions_ > 0;
-}
-
-template<unsigned int N, unsigned int Npairs >
 bool CollisionDetectorComponent<N, Npairs >::configureHook() {
     Logger::In in("CollisionDetectorComponent::configureHook");
 
@@ -269,12 +266,14 @@ bool CollisionDetectorComponent<N, Npairs >::configureHook() {
 template<unsigned int N, unsigned int Npairs >
 bool CollisionDetectorComponent<N, Npairs >::startHook() {
     collisions_ = 0;
+    in_collision_ = false;
     return true;
 }
 
 template<unsigned int N, unsigned int Npairs >
 void CollisionDetectorComponent<N, Npairs >::stopHook() {
     collisions_ = 0;
+    in_collision_ = false;
 }
 
 template<unsigned int N, unsigned int Npairs >
@@ -308,6 +307,13 @@ void CollisionDetectorComponent<N, Npairs >::updateHook() {
         col_out_[i] = col_[i];
     }
     collisions_ = collisions;
+
+    if (collisions_ > 0) {
+        in_collision_ = true;
+    }
+    else {
+        in_collision_ = false;
+    }
 }
 
 #endif  // COMMON_CORE_CS_COMPONENTS_COLLISION_DETECTOR_H__
