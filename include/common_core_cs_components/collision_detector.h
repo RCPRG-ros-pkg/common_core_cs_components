@@ -311,8 +311,9 @@ void CollisionDetectorComponent<N, Npairs >::updateHook() {
     }
 
     // calculate forward kinematics for all links
+    kin_model_->calculateFkAll(q_);
     for (int l_idx = 0; l_idx < col_model_->getLinksCount(); l_idx++) {
-        kin_model_->calculateFk(links_fk_[l_idx], col_model_->getLinkName(l_idx), q_);
+        links_fk_[l_idx] = kin_model_->getFrame(col_model_->getLinkName(l_idx));
     }
 
     getCollisionPairsNoAlloc(col_model_, links_fk_, activation_dist_, col_);
