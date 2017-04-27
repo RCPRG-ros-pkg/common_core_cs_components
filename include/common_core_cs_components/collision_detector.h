@@ -91,6 +91,9 @@ private:
     int collisions_;
 
     bool in_collision_;
+
+    KinematicModel::Jacobian jac1_, jac2_;
+    KinematicModel::Jacobian jac1_lin_, jac2_lin_;
 };
 
 template<unsigned int N, unsigned int Npairs >
@@ -102,6 +105,10 @@ CollisionDetectorComponent<N, Npairs >::CollisionDetectorComponent(const std::st
     , activation_dist_(0.0)
     , collisions_(0)
     , in_collision_(false)
+    , jac1_(6, N)
+    , jac2_(6, N)
+    , jac1_lin_(3, N)
+    , jac2_lin_(3, N)
 {
     this->ports()->addPort(port_q_in_);
     this->ports()->addPort(port_dq_in_);
@@ -338,8 +345,7 @@ void CollisionDetectorComponent<N, Npairs >::updateHook() {
         KDL::Vector n1_L1 = KDL::Frame(T_L1_B.M) * col_[i].n1_B;
         KDL::Vector n2_L2 = KDL::Frame(T_L2_B.M) * col_[i].n2_B;
 
-        KinematicModel::Jacobian jac1(6, N), jac2(6, N);
-        kin_model_->getJacobiansForPairX(jac1, jac2, link1_name, p1_L1, link2_name, p2_L2, q_);
+        kin_model_->getJacobiansForPairX(jac1_, jac2_, link1_name, p1_L1, link2_name, p2_L2, q_);
 /*
 // the commented code may be used in the future (for repulsive forces)
         double depth = (activation_dist_ - col_[i].dist);
@@ -363,24 +369,26 @@ void CollisionDetectorComponent<N, Npairs >::updateHook() {
         // the mapping between motions along contact normal and the Cartesian coordinates
         KDL::Vector e1 = KDL::Frame(T_B_L1.M) * n1_L1;
         KDL::Vector e2 = KDL::Frame(T_B_L2.M) * n2_L2;
-        Eigen::VectorXd Jd1(3), Jd2(3);
+        Eigen::Matrix<double, 3, 1 > Jd1, Jd2;
         for (int i = 0; i < 3; i++) {
             Jd1[i] = e1[i];
             Jd2[i] = e2[i];
         }
 
-        KinematicModel::Jacobian jac1_lin(3, N), jac2_lin(3, N);
         for (int q_idx = 0; q_idx < N; q_idx++) {
             for (int row_idx = 0; row_idx < 3; row_idx++) {
-                jac1_lin(row_idx, q_idx) = jac1(row_idx, q_idx);
-                jac2_lin(row_idx, q_idx) = jac2(row_idx, q_idx);
+                jac1_lin_(row_idx, q_idx) = jac1_(row_idx, q_idx);
+                jac2_lin_(row_idx, q_idx) = jac2_(row_idx, q_idx);
             }
         }
 
-        KinematicModel::Jacobian Jcol1 = Jd1.transpose() * jac1_lin;
-        KinematicModel::Jacobian Jcol2 = Jd2.transpose() * jac2_lin;
+        //KinematicModel::Jacobian
+        Eigen::Matrix<double, 1, N > Jcol1 = Jd1.transpose() * jac1_lin_;
+        //KinematicModel::Jacobian
+        Eigen::Matrix<double, 1, N > Jcol2 = Jd2.transpose() * jac2_lin_;
 
-        KinematicModel::Jacobian Jcol(1, N);
+        //KinematicModel::Jacobian Jcol(1, N);
+        Eigen::Matrix<double, 1, N > Jcol;
         for (int q_idx = 0; q_idx < N; q_idx++) {
             Jcol(0, q_idx) = Jcol1(0, q_idx) + Jcol2(0, q_idx);
         }
