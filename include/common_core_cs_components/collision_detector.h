@@ -68,6 +68,9 @@ private:
     Joints q_in_;
     RTT::InputPort<Joints > port_q_in_;
 
+    Joints dq_in_;
+    RTT::InputPort<Joints > port_dq_in_;
+
     CollisionList col_out_;
     RTT::OutputPort<CollisionList > port_col_out_;
 
@@ -83,6 +86,7 @@ private:
     boost::shared_ptr<self_collision::CollisionModel> col_model_;
     boost::shared_ptr<KinematicModel> kin_model_;
     std::vector<KDL::Frame > links_fk_;
+    std::vector<std::string > link_names_vec_;
 
     int collisions_;
 
@@ -93,12 +97,14 @@ template<unsigned int N, unsigned int Npairs >
 CollisionDetectorComponent<N, Npairs >::CollisionDetectorComponent(const std::string &name)
     : TaskContext(name, PreOperational)
     , port_q_in_("q_INPORT")
+    , port_dq_in_("dq_INPORT")
     , port_col_out_("col_OUTPORT")
     , activation_dist_(0.0)
     , collisions_(0)
     , in_collision_(false)
 {
     this->ports()->addPort(port_q_in_);
+    this->ports()->addPort(port_dq_in_);
     this->ports()->addPort(port_col_out_);
 
     this->addProperty("activation_dist", activation_dist_);
@@ -260,6 +266,11 @@ bool CollisionDetectorComponent<N, Npairs >::configureHook() {
         return false;
     }
 
+    link_names_vec_.clear();
+    for (int l_idx = 0; l_idx < col_model_->getLinksCount(); l_idx++) {
+        link_names_vec_.push_back(col_model_->getLinkName(l_idx));
+    }
+
     return true;
 }
 
@@ -288,6 +299,13 @@ void CollisionDetectorComponent<N, Npairs >::updateHook() {
         return;
     }
 
+    if (port_dq_in_.read(dq_in_) != RTT::NewData) {
+        Logger::In in("CollisionDetectorComponent::updateHook");
+        log(RTT::Error) << "no data on port " << port_dq_in_.getName() << Logger::endl;
+        error();
+        return;
+    }
+
     for (int i = 0; i < N; ++i) {
         q_(i) = q_in_(i);
     }
@@ -300,12 +318,87 @@ void CollisionDetectorComponent<N, Npairs >::updateHook() {
     getCollisionPairsNoAlloc(col_model_, links_fk_, activation_dist_, col_);
 
     int collisions = 0;
+    int col_out_idx = 0;
+
     for (int i = 0; i < Npairs; ++i) {
-        if (col_[i].link1_idx != -1) {
+        if (col_[i].link1_idx == -1) {
+            break;
+        }
+
+        const KDL::Frame &T_B_L1 = links_fk_[col_[i].link1_idx];
+        const std::string &link1_name = link_names_vec_[col_[i].link1_idx];
+        const std::string &link2_name = link_names_vec_[col_[i].link2_idx];
+
+        KDL::Frame T_L1_B = T_B_L1.Inverse();
+        const KDL::Frame &T_B_L2 = links_fk_[col_[i].link2_idx];
+        KDL::Frame T_L2_B = T_B_L2.Inverse();
+        KDL::Vector p1_L1 = T_L1_B * col_[i].p1_B;
+        KDL::Vector p2_L2 = T_L2_B * col_[i].p2_B;
+        KDL::Vector n1_L1 = KDL::Frame(T_L1_B.M) * col_[i].n1_B;
+        KDL::Vector n2_L2 = KDL::Frame(T_L2_B.M) * col_[i].n2_B;
+
+        KinematicModel::Jacobian jac1(6, N), jac2(6, N);
+        kin_model_->getJacobiansForPairX(jac1, jac2, link1_name, p1_L1, link2_name, p2_L2, q_);
+/*
+// the commented code may be used in the future (for repulsive forces)
+        double depth = (activation_dist_ - col_[i].dist);
+
+        // repulsive force
+        double f = 0.0;
+        if (col_[i].dist <= activation_dist_) {
+            f = depth / activation_dist_;
+        }
+        else {
+            f = 0.0;
+        }
+
+        if (f > 1.0) {
+            f = 1.0;
+        }
+        double Frep = Fmax_ * f * f;
+
+        double K = 2.0 * Fmax_ / (activation_dist_ * activation_dist_);
+*/
+        // the mapping between motions along contact normal and the Cartesian coordinates
+        KDL::Vector e1 = KDL::Frame(T_B_L1.M) * n1_L1;
+        KDL::Vector e2 = KDL::Frame(T_B_L2.M) * n2_L2;
+        Eigen::VectorXd Jd1(3), Jd2(3);
+        for (int i = 0; i < 3; i++) {
+            Jd1[i] = e1[i];
+            Jd2[i] = e2[i];
+        }
+
+        KinematicModel::Jacobian jac1_lin(3, N), jac2_lin(3, N);
+        for (int q_idx = 0; q_idx < N; q_idx++) {
+            for (int row_idx = 0; row_idx < 3; row_idx++) {
+                jac1_lin(row_idx, q_idx) = jac1(row_idx, q_idx);
+                jac2_lin(row_idx, q_idx) = jac2(row_idx, q_idx);
+            }
+        }
+
+        KinematicModel::Jacobian Jcol1 = Jd1.transpose() * jac1_lin;
+        KinematicModel::Jacobian Jcol2 = Jd2.transpose() * jac2_lin;
+
+        KinematicModel::Jacobian Jcol(1, N);
+        for (int q_idx = 0; q_idx < N; q_idx++) {
+            Jcol(0, q_idx) = Jcol1(0, q_idx) + Jcol2(0, q_idx);
+        }
+
+        // calculate relative velocity between points (1 dof)
+        double ddij = (Jcol * dq_in_)(0,0);
+
+        if (ddij > 0.01) {
+            col_out_[col_out_idx] = col_[i];
+            ++col_out_idx;
             ++collisions;
         }
-        col_out_[i] = col_[i];
     }
+
+    for (int i = col_out_idx; i < Npairs; ++i) {
+        col_out_[i].link1_idx = -1;
+        col_out_[i].link2_idx = -1;
+    }
+
     collisions_ = collisions;
 
     if (collisions_ > 0) {
