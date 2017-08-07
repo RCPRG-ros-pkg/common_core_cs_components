@@ -41,10 +41,11 @@
 
 #include <collision_convex_model/collision_convex_model.h>
 #include <kin_model/kin_model.h>
+#include "planer_utils/activation_function.h"
 
 using namespace RTT;
 
-template<unsigned int N, unsigned int Npairs >
+template<unsigned int N, unsigned int M, unsigned int Npairs >
 class CollisionDetectorComponent: public RTT::TaskContext {
 public:
     explicit CollisionDetectorComponent(const std::string &name);
@@ -57,28 +58,54 @@ public:
 
     void updateHook();
 
-    std::string getDiag() const;
+    std::string getDiag();
 
 private:
 
-    typedef Eigen::Matrix<double, N, 1>  Joints;
+    typedef Eigen::Matrix<double, N, 1>  VectorN;
+    typedef Eigen::Matrix<double, M, 1>  VectorM;
+    typedef Eigen::Matrix<double, M, M>  MatrixMM;
     typedef boost::array<self_collision::CollisionInfo, Npairs > CollisionList;
 
     // OROCOS ports
-    Joints q_in_;
-    RTT::InputPort<Joints > port_q_in_;
+    VectorN q_in_;
+    RTT::InputPort<VectorN > port_q_in_;
 
-    Joints dq_in_;
-    RTT::InputPort<Joints > port_dq_in_;
+    VectorN dq_in_;
+    RTT::InputPort<VectorN > port_dq_in_;
+
+    VectorM articulated_dq_in_;
+
+    MatrixMM mInv_in_;
+    RTT::InputPort<MatrixMM > port_mInv_in_;
 
     CollisionList col_out_;
     RTT::OutputPort<CollisionList > port_col_out_;
+
+    // collision torques
+    VectorM t_out_;
+    RTT::OutputPort<VectorM > port_t_out_;
+
+    // collision task null space
+    VectorM Nt_in_;
+    RTT::InputPort<VectorM > port_Nt_in_;
+
+    MatrixMM N_out_;
 
     // OROCOS properties
     double activation_dist_;
     std::string robot_description_;
     std::string robot_semantic_description_;
     std::vector<std::string > joint_names_;
+    std::vector<std::string > articulated_joint_names_;
+    bool calculate_forces_;
+    double Fmax_;
+    std::vector<double > damping_factors_;
+
+    std::array<int, M> map_idx_q_nr_;
+    std::vector<std::pair<int, int> > map_ign_idx_q_nr_;
+
+    std::shared_ptr<ActivationFunction > af_;
 
     std::vector<self_collision::CollisionInfo > col_;
     Eigen::VectorXd q_;
@@ -94,21 +121,26 @@ private:
 
     KinematicModel::Jacobian jac1_, jac2_;
     KinematicModel::Jacobian jac1_lin_, jac2_lin_;
+
+    int diag_l_idx;
 };
 
-template<unsigned int N, unsigned int Npairs >
-CollisionDetectorComponent<N, Npairs >::CollisionDetectorComponent(const std::string &name)
+template<unsigned int N, unsigned int M, unsigned int Npairs >
+CollisionDetectorComponent<N, M, Npairs >::CollisionDetectorComponent(const std::string &name)
     : TaskContext(name, PreOperational)
     , port_q_in_("q_INPORT")
     , port_dq_in_("dq_INPORT")
     , port_col_out_("col_OUTPORT")
-    , activation_dist_(0.0)
+    , activation_dist_(-1.0)
     , collisions_(0)
     , in_collision_(false)
     , jac1_(6, N)
     , jac2_(6, N)
     , jac1_lin_(3, N)
     , jac2_lin_(3, N)
+    , calculate_forces_(false)
+    , Fmax_(-1)
+    , diag_l_idx(0)
 {
     this->ports()->addPort(port_q_in_);
     this->ports()->addPort(port_dq_in_);
@@ -118,18 +150,25 @@ CollisionDetectorComponent<N, Npairs >::CollisionDetectorComponent(const std::st
     this->addProperty("robot_description", robot_description_);
     this->addProperty("robot_semantic_description", robot_semantic_description_);
     this->addProperty("joint_names", joint_names_);
+    this->addProperty("articulated_joint_names", articulated_joint_names_);
+    this->addProperty("calculate_forces", calculate_forces_);
+    this->addProperty("Fmax", Fmax_);
+    this->addProperty("damping_factors", damping_factors_);
 
-    this->addOperation("getDiag", &CollisionDetectorComponent<N, Npairs >::getDiag, this, RTT::ClientThread);
+    this->addOperation("getDiag", &CollisionDetectorComponent<N, M, Npairs >::getDiag, this, RTT::ClientThread);
     this->addAttribute("inCollision", in_collision_);
 
     col_.resize(Npairs);
-    q_.resize(N);
+
+    for (int i = 0; i < Npairs; ++i) {
+        col_[i].link1_idx = -1;
+        col_out_[i].link1_idx = -1;
+    }
 }
 
-template<unsigned int N, unsigned int Npairs >
-std::string CollisionDetectorComponent<N, Npairs >::getDiag() const {
-    static std::vector<self_collision::CollisionInfo > col(Npairs);
-    static int l_idx = 0;
+template<unsigned int N, unsigned int M, unsigned int Npairs >
+std::string CollisionDetectorComponent<N, M, Npairs >::getDiag() {
+    std::array<self_collision::CollisionInfo, Npairs > col;
     std::ostringstream strs;
 
     for (int i = 0; i < Npairs; ++i) {
@@ -159,67 +198,69 @@ std::string CollisionDetectorComponent<N, Npairs >::getDiag() const {
         }
     }
 
-//    for (int i = 0; i < col_model_->getLinksCount(); ++i) {
-        const self_collision::Link::VecPtrCollision& vec_col = col_model_->getLinkCollisionArray(l_idx);
-        if (vec_col.size() > 0) {
-            strs << "<l idx=\"" << l_idx << "\" name=\"" << col_model_->getLinkName(l_idx) << "\">";
-            for (int j = 0; j < vec_col.size(); ++j) {
-                strs << "<g ";
-                strs << "x=\"" << vec_col[j]->origin.p.x() << "\" ";
-                strs << "y=\"" << vec_col[j]->origin.p.y() << "\" ";
-                strs << "z=\"" << vec_col[j]->origin.p.z() << "\" ";
-                strs << "rx=\"" << vec_col[j]->origin.M.GetRot().x() << "\" ";
-                strs << "ry=\"" << vec_col[j]->origin.M.GetRot().y() << "\" ";
-                strs << "rz=\"" << vec_col[j]->origin.M.GetRot().z() << "\" ";
-                
-                int type = vec_col[j]->geometry->getType();
-                switch (type) {
-                case self_collision::Geometry::UNDEFINED:
-                    {
-                        strs << "type=\"UNDEFINED\" ";
-                        break;
-                    }
-                case self_collision::Geometry::CAPSULE:
-                    {
-                        strs << "type=\"CAPSULE\" ";
-                        boost::shared_ptr<self_collision::Capsule > ob = boost::dynamic_pointer_cast<self_collision::Capsule >(vec_col[j]->geometry);
-                        strs << "r=\"" << ob->getRadius() << "\" ";
-                        strs << "l=\"" << ob->getLength() << "\" ";
-                        break;
-                    }
-                case self_collision::Geometry::CONVEX:
-                    strs << "type=\"CONVEX\" ";
+    const self_collision::Link::VecPtrCollision& vec_col = col_model_->getLinkCollisionArray(diag_l_idx);
+    if (vec_col.size() > 0) {
+        strs << "<l idx=\"" << diag_l_idx << "\" name=\"" << col_model_->getLinkName(diag_l_idx) << "\">";
+        for (int j = 0; j < vec_col.size(); ++j) {
+            strs << "<g ";
+            strs << "x=\"" << vec_col[j]->origin.p.x() << "\" ";
+            strs << "y=\"" << vec_col[j]->origin.p.y() << "\" ";
+            strs << "z=\"" << vec_col[j]->origin.p.z() << "\" ";
+            double qx, qy, qz, qw;
+            vec_col[j]->origin.M.GetQuaternion(qx,qy,qz,qw);
+            strs << "qx=\"" << qx << "\" ";
+            strs << "qy=\"" << qy << "\" ";
+            strs << "qz=\"" << qz << "\" ";
+            strs << "qw=\"" << qw << "\" ";
+            
+            int type = vec_col[j]->geometry->getType();
+            switch (type) {
+            case self_collision::Geometry::UNDEFINED:
+                {
+                    strs << "type=\"UNDEFINED\" ";
                     break;
-                case self_collision::Geometry::SPHERE:
-                    {
-                        strs << "type=\"SPHERE\" ";
-                        boost::shared_ptr<self_collision::Sphere > ob = boost::dynamic_pointer_cast<self_collision::Sphere >(vec_col[j]->geometry);
-                        strs << "r=\"" << ob->getRadius() << "\" ";
-                        break;
-                    }
-                case self_collision::Geometry::TRIANGLE:
-                    strs << "type=\"TRIANGLE\" ";
-                    break;
-                case self_collision::Geometry::OCTOMAP:
-                    strs << "type=\"OCTOMAP\" ";
-                    break;
-                default:
-                    strs << "type=\"ERROR\" ";
                 }
-                strs << "/>";
+            case self_collision::Geometry::CAPSULE:
+                {
+                    strs << "type=\"CAPSULE\" ";
+                    boost::shared_ptr<self_collision::Capsule > ob = boost::dynamic_pointer_cast<self_collision::Capsule >(vec_col[j]->geometry);
+                    strs << "r=\"" << ob->getRadius() << "\" ";
+                    strs << "l=\"" << ob->getLength() << "\" ";
+                    break;
+                }
+            case self_collision::Geometry::CONVEX:
+                strs << "type=\"CONVEX\" ";
+                break;
+            case self_collision::Geometry::SPHERE:
+                {
+                    strs << "type=\"SPHERE\" ";
+                    boost::shared_ptr<self_collision::Sphere > ob = boost::dynamic_pointer_cast<self_collision::Sphere >(vec_col[j]->geometry);
+                    strs << "r=\"" << ob->getRadius() << "\" ";
+                    break;
+                }
+            case self_collision::Geometry::TRIANGLE:
+                strs << "type=\"TRIANGLE\" ";
+                break;
+            case self_collision::Geometry::OCTOMAP:
+                strs << "type=\"OCTOMAP\" ";
+                break;
+            default:
+                strs << "type=\"ERROR\" ";
             }
-            strs << "</l>";
+            strs << "/>";
         }
-//    }
-    l_idx = (l_idx + 1) % col_model_->getLinksCount();
+        strs << "</l>";
+    }
+
+    diag_l_idx = (diag_l_idx + 1) % col_model_->getLinksCount();
 
     strs << "</cd>";
 
     return strs.str();
 }
 
-template<unsigned int N, unsigned int Npairs >
-bool CollisionDetectorComponent<N, Npairs >::configureHook() {
+template<unsigned int N, unsigned int M, unsigned int Npairs >
+bool CollisionDetectorComponent<N, M, Npairs >::configureHook() {
     Logger::In in("CollisionDetectorComponent::configureHook");
 
     // Get the rosparam service requester
@@ -260,18 +301,94 @@ bool CollisionDetectorComponent<N, Npairs >::configureHook() {
         return false;
     }
 
+    if (articulated_joint_names_.size() != M) {
+        Logger::log() << Logger::Error << "ROS parameter \'articulated_joint_names\' has wrong size: " << articulated_joint_names_.size()
+            << ", should be: " << M << Logger::endl;
+        return false;
+    }
+
+    for (int i = 0; i < M; ++i) {
+        bool found = false;
+        for (int j = 0; j < N; ++j) {
+            if (joint_names_[j] == articulated_joint_names_[i]) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            Logger::log() << Logger::Error << "The set 'articulated_joint_names' must be a subset of 'joint_names'. Joint name '" << articulated_joint_names_[i]
+                << "' is missing in 'joint_names'." << Logger::endl;
+            return false;
+        }
+    }
+
+    if (calculate_forces_) {
+        this->ports()->addPort("mInv_INPORT", port_mInv_in_);
+        this->ports()->addPort("Nt_INPORT", port_Nt_in_);
+        this->ports()->addPort("t_OUTPORT", port_t_out_);
+
+        if (Fmax_ <= 0.0) {
+            log(RTT::Error) << "Property \'Fmax\' is not set" << Logger::endl;
+            return false;
+        }
+
+        if (damping_factors_.size() != articulated_joint_names_.size()) {
+            Logger::log() << Logger::Error << "ROS parameter \'damping_factors\' has wrong size: " << damping_factors_.size()
+                << ", should be: " << articulated_joint_names_.size() << Logger::endl;
+            return false;
+        }
+    }
+
+    kin_model_.reset( new KinematicModel(robot_description_, articulated_joint_names_) );
+
+    std::vector<std::string > ign_joint_name_vec;
+    kin_model_->getIgnoredJointsNameVector(ign_joint_name_vec);
+    for (int i = 0; i < ign_joint_name_vec.size(); ++i) {
+        const std::string &joint_name = ign_joint_name_vec[i];
+        bool found = false;
+        for (int j = 0; j < N; ++j) {
+            if (joint_name == joint_names_[j]) {
+                map_ign_idx_q_nr_.push_back(std::pair<int, int >(i, j));
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            log(RTT::Info) << "Could not find ignored joint '" << joint_name << "' in all joints list (probably it is ok)" << Logger::endl;
+            //return false;
+        }
+    }
+
+    for (int i = 0; i < N; ++i) {
+        bool articulated = false;
+        for (int j = 0; j < M; ++j) {
+            if (joint_names_[i] == articulated_joint_names_[j]) {
+                articulated = true;
+                map_idx_q_nr_[j] = i;
+                break;
+            }
+        }
+        if (!articulated) {
+        }
+    }
+
+
+
+    q_.resize(M);
+
     col_model_ = self_collision::CollisionModel::parseURDF(robot_description_);
     col_model_->parseSRDF(robot_semantic_description_);
     col_model_->generateCollisionPairs();
 
     links_fk_.resize(col_model_->getLinksCount());
 
-    kin_model_.reset( new KinematicModel(robot_description_, joint_names_) );
 
-    if (activation_dist_ == 0.0) {
+    if (activation_dist_ <= 0.0) {
         log(RTT::Error) << "Property \'activation_dist\' is not set" << Logger::endl;
         return false;
     }
+
+    af_.reset(new ActivationFunction(0.2 * activation_dist_, 4.0 / activation_dist_));
 
     link_names_vec_.clear();
     for (int l_idx = 0; l_idx < col_model_->getLinksCount(); l_idx++) {
@@ -281,21 +398,21 @@ bool CollisionDetectorComponent<N, Npairs >::configureHook() {
     return true;
 }
 
-template<unsigned int N, unsigned int Npairs >
-bool CollisionDetectorComponent<N, Npairs >::startHook() {
+template<unsigned int N, unsigned int M, unsigned int Npairs >
+bool CollisionDetectorComponent<N, M, Npairs >::startHook() {
     collisions_ = 0;
     in_collision_ = false;
     return true;
 }
 
-template<unsigned int N, unsigned int Npairs >
-void CollisionDetectorComponent<N, Npairs >::stopHook() {
+template<unsigned int N, unsigned int M, unsigned int Npairs >
+void CollisionDetectorComponent<N, M, Npairs >::stopHook() {
     collisions_ = 0;
     in_collision_ = false;
 }
 
-template<unsigned int N, unsigned int Npairs >
-void CollisionDetectorComponent<N, Npairs >::updateHook() {
+template<unsigned int N, unsigned int M, unsigned int Npairs >
+void CollisionDetectorComponent<N, M, Npairs >::updateHook() {
     //
     // read HW status
     //
@@ -313,12 +430,61 @@ void CollisionDetectorComponent<N, Npairs >::updateHook() {
         return;
     }
 
-    for (int i = 0; i < N; ++i) {
-        q_(i) = q_in_(i);
+    if (calculate_forces_) {
+        if (port_mInv_in_.read(mInv_in_) != RTT::NewData) {
+            Logger::In in("CollisionDetectorComponent::updateHook");
+            log(RTT::Error) << "no data on port " << port_mInv_in_.getName() << Logger::endl;
+            error();
+            return;
+        }
+        Nt_in_.setZero();
+        if (port_Nt_in_.read(Nt_in_) != RTT::NewData) {
+        }
+        t_out_.setZero();
+        N_out_.setIdentity();
+
+        for (int idx = 0; idx < map_ign_idx_q_nr_.size(); ++idx) {
+            kin_model_->setIgnoredJointValue(map_ign_idx_q_nr_[idx].first, q_in_(map_ign_idx_q_nr_[idx].second));
+        }
+
+        for (int i = 0; i < M; ++i) {
+            q_(i) = q_in_(map_idx_q_nr_[i]);
+            articulated_dq_in_(i) = dq_in_(map_idx_q_nr_[i]);
+        }
+
+/*
+        for (int i = 0; i < N; ++i) {
+            bool articulated = false;
+            for (int j = 0; j < M; ++j) {
+                if (joint_names_[i] == articulated_joint_names_[j]) {
+                    articulated = true;
+                    q_(j) = q_in_(i);
+                    articulated_dq_in_(j) = dq_in_(i);
+                    break;
+                }
+            }
+            if (!articulated) {
+                kin_model_->setIgnoredJointValue(joint_names_[i], q_in_(i));
+            }
+        }
+*/
+    }
+    else {
+        for (int i = 0; i < N; ++i) {
+//            q_(i) = q_in_(i);
+            for (int j = 0; j < M; ++j) {
+                if (joint_names_[i] == articulated_joint_names_[j]) {
+                    q_(j) = q_in_(i);
+                    articulated_dq_in_(j) = dq_in_(i);
+                    break;
+                }
+            }
+        }
     }
 
-    // calculate forward kinematics for all links
     kin_model_->calculateFkAll(q_);
+
+    // calculate forward kinematics for all links
     for (int l_idx = 0; l_idx < col_model_->getLinksCount(); l_idx++) {
         links_fk_[l_idx] = kin_model_->getFrame(col_model_->getLinkName(l_idx));
     }
@@ -346,26 +512,7 @@ void CollisionDetectorComponent<N, Npairs >::updateHook() {
         KDL::Vector n2_L2 = KDL::Frame(T_L2_B.M) * col_[i].n2_B;
 
         kin_model_->getJacobiansForPairX(jac1_, jac2_, link1_name, p1_L1, link2_name, p2_L2, q_);
-/*
-// the commented code may be used in the future (for repulsive forces)
-        double depth = (activation_dist_ - col_[i].dist);
 
-        // repulsive force
-        double f = 0.0;
-        if (col_[i].dist <= activation_dist_) {
-            f = depth / activation_dist_;
-        }
-        else {
-            f = 0.0;
-        }
-
-        if (f > 1.0) {
-            f = 1.0;
-        }
-        double Frep = Fmax_ * f * f;
-
-        double K = 2.0 * Fmax_ / (activation_dist_ * activation_dist_);
-*/
         // the mapping between motions along contact normal and the Cartesian coordinates
         KDL::Vector e1 = KDL::Frame(T_B_L1.M) * n1_L1;
         KDL::Vector e2 = KDL::Frame(T_B_L2.M) * n2_L2;
@@ -383,24 +530,77 @@ void CollisionDetectorComponent<N, Npairs >::updateHook() {
         }
 
         //KinematicModel::Jacobian
-        Eigen::Matrix<double, 1, N > Jcol1 = Jd1.transpose() * jac1_lin_;
+        Eigen::Matrix<double, 1, M > Jcol1 = Jd1.transpose() * jac1_lin_;
         //KinematicModel::Jacobian
-        Eigen::Matrix<double, 1, N > Jcol2 = Jd2.transpose() * jac2_lin_;
+        Eigen::Matrix<double, 1, M > Jcol2 = Jd2.transpose() * jac2_lin_;
 
         //KinematicModel::Jacobian Jcol(1, N);
-        Eigen::Matrix<double, 1, N > Jcol;
+        Eigen::Matrix<double, 1, M > Jcol;
         for (int q_idx = 0; q_idx < N; q_idx++) {
             Jcol(0, q_idx) = Jcol1(0, q_idx) + Jcol2(0, q_idx);
         }
 
         // calculate relative velocity between points (1 dof)
-        double ddij = (Jcol * dq_in_)(0,0);
+        double ddij = (Jcol * articulated_dq_in_)(0,0);
 
+        // for collision visualization
+        col_out_[col_out_idx] = col_[i];
+        ++col_out_idx;
+
+        // for collision predicate
         if (ddij > 0.01) {
-            col_out_[col_out_idx] = col_[i];
-            ++col_out_idx;
             ++collisions;
         }
+
+        if (calculate_forces_) {
+            double depth = (activation_dist_ - col_[i].dist);
+
+            // repulsive force
+            double f = 0.0;
+            if (col_[i].dist <= activation_dist_) {
+                f = depth / activation_dist_;
+            }
+            else {
+                f = 0.0;
+            }
+
+            if (f > 1.0) {
+                f = 1.0;
+            }
+
+            double Frep = Fmax_ * f * f;
+
+//            std::cout << i << ", d: " << col_[i].dist << ", f: " << Frep << std::endl;
+            double K = 2.0 * Fmax_ / (activation_dist_ * activation_dist_);
+
+            // calculate collision mass (1 dof)
+            double Mdij_inv = (Jcol * mInv_in_ * Jcol.transpose())(0,0);
+
+            double D = 2.0 * 0.7 * sqrt(Mdij_inv * K);  // sqrt(K/M)
+
+            double activation = 1.0 - af_->func_Ndes(col_[i].dist);
+            MatrixMM Ncol12;
+            Ncol12.setIdentity();
+            Ncol12 = Ncol12 - (Jcol.transpose() * activation * Jcol);
+
+            ddij = 0;
+            VectorM d_torque = Jcol.transpose() * (-Frep - D * ddij);
+            t_out_ += d_torque;
+            N_out_ = N_out_ * Ncol12;
+        }
+    }
+
+    if (calculate_forces_) {
+        //std::cout << "a: " << t_out_.transpose() << std::endl;
+        t_out_ += N_out_ * Nt_in_;  // apply null space torque
+        //std::cout << "b: " << t_out_.transpose() << std::endl;
+        // apply simple damping
+        for (int i = 0; i < M; ++i) {
+            t_out_[i] -= damping_factors_[i] * articulated_dq_in_[i];
+        }
+        //std::cout << "c: " << t_out_.transpose() << std::endl;
+
+        port_t_out_.write(t_out_);
     }
 
     for (int i = col_out_idx; i < Npairs; ++i) {
@@ -410,7 +610,7 @@ void CollisionDetectorComponent<N, Npairs >::updateHook() {
 
     collisions_ = collisions;
 
-    if (collisions_ > 0) {
+    if (!calculate_forces_ && collisions_ > 0) {
         in_collision_ = true;
     }
     else {
