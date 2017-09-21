@@ -51,6 +51,7 @@ orocos_generate_package(
   DEPENDS_TARGETS rtt_ros rtt_rosparam
 )
 
-#orocos_install_headers(
-#  DIRECTORY include/${PROJECT_NAME}/
-#)
+orocos_install_headers(
+  DIRECTORY include/${PROJECT_NAME}/
+)
+
