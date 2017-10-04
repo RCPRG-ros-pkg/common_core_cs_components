@@ -43,7 +43,7 @@ from geometry_msgs.msg import Vector3
 import PyKDL
 from diagnostic_msgs.msg import *
 
-import velma_common.velmautils as velmautils
+from ros_utils import marker_publisher
 
 class Geometry(object):
     def __init__(self, type_name):
@@ -90,7 +90,7 @@ class Collision:
 
 class ColDetVis:
     def __init__(self, subsystem_name, component_name):
-        self.pub_marker = velmautils.MarkerPublisher()
+        self.pub_marker = marker_publisher.MarkerPublisher('/velma_markers')
         rospy.Subscriber("/" + subsystem_name + "/diag", DiagnosticArray, self.diagCallback)
         self.links = {}
         self.collisions_list = []
