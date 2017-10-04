@@ -31,96 +31,168 @@
 # Author: Dawid Seredynski
 #
 
+import roslib; roslib.load_manifest('common_core_cs_components')
+import sys
 import rospy
-from diagnostic_msgs.msg import DiagnosticArray
-from visualization_msgs.msg import *
-from geometry_msgs.msg import *
-from ros_utils import marker_publisher
-import xml.dom.minidom as minidom
-import PyKDL
 import copy
+import threading
 
-class CollisionListener:
+import xml.dom.minidom as minidom
+from visualization_msgs.msg import *
+from geometry_msgs.msg import Vector3
+import PyKDL
+from diagnostic_msgs.msg import *
 
-    def callback(self, data):
-        for v in data.status[1].values:
-            if v.key == 'ColDetRep':
-                self.xml = copy.copy(v.value)
-#                print v.value
+import velma_common.velmautils as velmautils
 
-#        rospy.loginfo(rospy.get_caller_id() + "I heard %s", data.data)
+class Geometry(object):
+    def __init__(self, type_name):
+        self.f = None
+        self.type = type_name
 
+class Capsule(Geometry):
     def __init__(self):
-        rospy.init_node('show_collisions', anonymous=False)
-#        self.pub = rospy.Publisher('chatter', String, queue_size=10)
-        rospy.Subscriber("/velma_core_cs/diag", DiagnosticArray, self.callback)
+        super(Capsule, self).__init__("CAPSULE")
+        self.r = None
+        self.l = None
 
-        self.pub = marker_publisher.MarkerPublisher('/velma_markers')
+class Sphere(Geometry):
+    def __init__(self):
+        super(Sphere, self).__init__("SPHERE")
+        self.r = None
+
+class Link:
+    def __init__(self):
+        self.idx = None
+        self.name = None
+        self.geoms = []
+
+class Collision:
+    def __init__(self, xml):
+        self.parseXml(xml)
+
+    def parseXml(self, xml):
+        self.i1 = int(xml.getAttribute("i1"))
+        self.i2 = int(xml.getAttribute("i2"))
+        self.p1x = float(xml.getAttribute("p1x"))
+        self.p1y = float(xml.getAttribute("p1y"))
+        self.p1z = float(xml.getAttribute("p1z"))
+        self.p2x = float(xml.getAttribute("p2x"))
+        self.p2y = float(xml.getAttribute("p2y"))
+        self.p2z = float(xml.getAttribute("p2z"))
+        self.d = float(xml.getAttribute("d"))
+        self.n1x = float(xml.getAttribute("n1x"))
+        self.n1y = float(xml.getAttribute("n1y"))
+        self.n1z = float(xml.getAttribute("n1z"))
+        self.n2x = float(xml.getAttribute("n2x"))
+        self.n2y = float(xml.getAttribute("n2y"))
+        self.n2z = float(xml.getAttribute("n2z"))
+
+class ColDetVis:
+    def __init__(self, subsystem_name, component_name):
+        self.pub_marker = velmautils.MarkerPublisher()
+        rospy.Subscriber("/" + subsystem_name + "/diag", DiagnosticArray, self.diagCallback)
         self.links = {}
-        self.xml = None
+        self.collisions_list = []
+        self.component_name = component_name
+        self.lock = threading.Lock()
+
+    def diagCallback(self, data):
+        for v in data.status[1].values:
+            if v.key == self.component_name:
+                dom = minidom.parseString(v.value)
+                cd = dom.getElementsByTagName("cd")
+                #col_count = cd[0].getAttribute("col_count")
+                #print col_count
+
+                cols = cd[0].getElementsByTagName("c")
+
+                with self.lock:
+                    self.collisions_list = []
+                    for c in cols:
+                        self.collisions_list.append( Collision(c) )
+
+                links = cd[0].getElementsByTagName("l")
+                for l in links:
+                    idx = int(l.getAttribute("idx"))
+                    if not idx in self.links:
+                        geoms = l.getElementsByTagName("g")
+                        link_geoms = []
+                        for g in geoms:
+                            x = float(g.getAttribute("x"))
+                            y = float(g.getAttribute("y"))
+                            z = float(g.getAttribute("z"))
+                            qx = float(g.getAttribute("qx"))
+                            qy = float(g.getAttribute("qy"))
+                            qz = float(g.getAttribute("qz"))
+                            qw = float(g.getAttribute("qw"))
+                            f = PyKDL.Frame(PyKDL.Rotation.Quaternion(qx,qy,qz,qw), PyKDL.Vector(x,y,z))
+                            type_name = g.getAttribute("type")
+                            if type_name == "SPHERE":
+                                gg = Sphere()
+                                gg.r = float(g.getAttribute("r"))
+                            elif type_name == "CAPSULE":
+                                gg = Capsule()
+                                gg.r = float(g.getAttribute("r"))
+                                gg.l = float(g.getAttribute("l"))
+                            else:
+                                gg = None
+                            if gg:
+                                gg.f = f
+                                link_geoms.append(gg)
+                        with self.lock:
+                            self.links[idx] = Link()
+                            self.links[idx].idx = idx
+                            self.links[idx].name = l.getAttribute("name")
+                            self.links[idx].geoms = link_geoms
+
+                break
 
     def spin(self):
-        rate = rospy.Rate(20)
         while not rospy.is_shutdown():
-            if self.xml:
-                xml = minidom.parseString(self.xml)
-                cd = xml.getElementsByTagName("cd")
-                if len(cd) != 1:
-                    raise Exception('subsystem_definition', 'subsystem_definition is missing')
-                link = cd[0].getElementsByTagName("l")
-                for l in link:
-                    name = l.getAttribute("name")
-                    idx = l.getAttribute("idx")
-                    geom = l.getElementsByTagName("g")
-                    geom_list = []
-                    for g in geom:
-                        g_x = float(g.getAttribute("x"))
-                        g_y = float(g.getAttribute("y"))
-                        g_z = float(g.getAttribute("z"))
-                        g_qx = float(g.getAttribute("qx"))
-                        g_qy = float(g.getAttribute("qy"))
-                        g_qz = float(g.getAttribute("qz"))
-                        g_qw = float(g.getAttribute("qw"))
-                        fr = PyKDL.Frame( PyKDL.Rotation.Quaternion(g_qx, g_qy, g_qz, g_qw), PyKDL.Vector(g_x, g_y, g_z) )
-                        g_type = g.getAttribute("type")
-                        if g_type == "SPHERE":
-                            g_r = float(g.getAttribute("r"))
-                            geom_list.append( (fr, g_type, g_r) )
-                        elif g_type == "CAPSULE":
-                            g_r = float(g.getAttribute("r"))
-                            g_l = float(g.getAttribute("l"))
-                            geom_list.append( (fr, g_type,  g_r, g_l) )
-                    self.links[name] = (idx, geom_list)
-                col = cd[0].getElementsByTagName("c")
-                col_list = []
-                for c in col:
-                    v1 = PyKDL.Vector( float(c.getAttribute("p1x")), float(c.getAttribute("p1y")), float(c.getAttribute("p1z")) )
-                    v2 = PyKDL.Vector( float(c.getAttribute("p2x")), float(c.getAttribute("p2y")), float(c.getAttribute("p2z")) )
-                    col_list.append( (v1, v2) )
-                m_id = 0
-                for name in self.links:
-                    link = self.links[name]
-                    idx = link[0]
-                    geom_list = link[1]
-                    for g in geom_list:
-                        fr = g[0]
-                        g_type = g[1]
-                        if g_type == "SPHERE":
-                            g_r = g[2]
-                            m_id = self.pub.publishSinglePointMarker(PyKDL.Vector(), m_id, r=0, g=1, b=0, a=0.5, namespace='default', frame_id=name, m_type=Marker.SPHERE, scale=Vector3(2*g_r, 2*g_r, 2*g_r), T=fr)
-                        elif g_type == "CAPSULE":
-                            g_r = g[2]
-                            g_l = g[3]
-                            m_id = self.pub.publishSinglePointMarker(PyKDL.Vector(0,0,-g_l/2), m_id, r=0, g=1, b=0, a=0.5, namespace='default', frame_id=name, m_type=Marker.SPHERE, scale=Vector3(2*g_r, 2*g_r, 2*g_r), T=fr)
-                            m_id = self.pub.publishSinglePointMarker(PyKDL.Vector(), m_id, r=0, g=1, b=0, a=0.5, namespace='default', frame_id=name, m_type=Marker.CYLINDER, scale=Vector3(2*g_r, 2*g_r, g_l), T=fr)
-                            m_id = self.pub.publishSinglePointMarker(PyKDL.Vector(0,0,g_l/2), m_id, r=0, g=1, b=0, a=0.5, namespace='default', frame_id=name, m_type=Marker.SPHERE, scale=Vector3(2*g_r, 2*g_r, 2*g_r), T=fr)
-                for c in col_list:
-                    m_id = self.pub.publishVectorMarker(c[0], c[1], m_id, 1, 0, 0, frame='torso_base', namespace='default', scale=0.005)
-                self.pub.eraseMarkers(m_id, 200, frame_id='torso_base', namespace='default')
-            rate.sleep()
-    
-if __name__ == '__main__':
-    col = CollisionListener()
-    col.spin()
+            with self.lock:
+                collisions_list = copy.copy(self.collisions_list)
+                links = copy.copy(self.links)
+            m_id = 0
+            if len(collisions_list) > 0:
+                print "collisions:"
+            for c in collisions_list:
+                v1 = PyKDL.Vector(c.p1x, c.p1y, c.p1z)
+                v2 = PyKDL.Vector(c.p2x, c.p2y, c.p2z)
+                m_id = self.pub_marker.publishVectorMarker(v1, v2, m_id, 1, 0, 0, frame='torso_base', namespace='default', scale=0.01)
+                if c.i1 in links and c.i2 in links:
+                    print "   ", links[c.i1].name, links[c.i2].name, c.d
+            self.pub_marker.eraseMarkers(m_id, 200, frame_id='torso_base', namespace='default')
 
+            m_id = 201
+            for idx in links:
+                link = links[idx]
+                for g in link.geoms:
+                    if g.type == "SPHERE":
+                        m_id = self.pub_marker.publishSinglePointMarker(PyKDL.Vector(), m_id, r=0, g=1, b=0, a=0.5, namespace='collision', frame_id=link.name, m_type=Marker.SPHERE, scale=Vector3(g.r*2, g.r*2, g.r*2), T=g.f)
+                    if g.type == "CAPSULE":
+                        m_id = self.pub_marker.publishSinglePointMarker(PyKDL.Vector(0,0,-g.l/2), m_id, r=0, g=1, b=0, a=0.5, namespace='collision', frame_id=link.name, m_type=Marker.SPHERE, scale=Vector3(g.r*2, g.r*2, g.r*2), T=g.f)
+                        m_id = self.pub_marker.publishSinglePointMarker(PyKDL.Vector(0,0,g.l/2), m_id, r=0, g=1, b=0, a=0.5, namespace='collision', frame_id=link.name, m_type=Marker.SPHERE, scale=Vector3(g.r*2, g.r*2, g.r*2), T=g.f)
+                        m_id = self.pub_marker.publishSinglePointMarker(PyKDL.Vector(), m_id, r=0, g=1, b=0, a=0.5, namespace='collision', frame_id=link.name, m_type=Marker.CYLINDER, scale=Vector3(g.r*2, g.r*2, g.l), T=g.f)
+            try:
+                rospy.sleep(0.1)
+            except:
+                pass
+
+if __name__ == "__main__":
+
+    if len(sys.argv) != 3:
+        print "usage:"
+        print "show_collisions.py subsystem_name component_name"
+        exit(1)
+
+    rospy.init_node('col_det_vis', anonymous=True)
+
+    rospy.sleep(1)
+
+    cdv = ColDetVis(sys.argv[1], sys.argv[2])
+
+    cdv.spin()
+
+    exit(0)
 
