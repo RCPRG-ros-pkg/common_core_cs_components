@@ -55,3 +55,6 @@ orocos_install_headers(
   DIRECTORY include/${PROJECT_NAME}/
 )
 
+catkin_install_python(PROGRAMS scripts/show_collisions.py
+DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
+
