@@ -180,17 +180,19 @@ class ColDetVis:
                 pass
 
 if __name__ == "__main__":
-
-    if len(sys.argv) != 3:
-        print "usage:"
-        print "show_collisions.py subsystem_name component_name"
-        exit(1)
-
     rospy.init_node('col_det_vis', anonymous=True)
 
-    rospy.sleep(1)
+    try:
+        subsystem_name = rospy.get_param("~subsystem_name")
+        component_name = rospy.get_param("~component_name")
+    except KeyError as e:
+        print "Some ROS parameters are not provided:"
+        print e
+        exit(1)
 
-    cdv = ColDetVis(sys.argv[1], sys.argv[2])
+    rospy.sleep(0.5)
+
+    cdv = ColDetVis(subsystem_name, component_name)
 
     cdv.spin()
 
