@@ -37,11 +37,13 @@ import rospy
 import copy
 import threading
 
+import tf
 import xml.dom.minidom as minidom
 from visualization_msgs.msg import *
 from geometry_msgs.msg import Vector3
 import PyKDL
 from diagnostic_msgs.msg import *
+import tf_conversions.posemath as pm
 
 from ros_utils import marker_publisher
 
@@ -96,6 +98,7 @@ class ColDetVis:
         self.collisions_list = []
         self.component_name = component_name
         self.lock = threading.Lock()
+        self.listener = tf.TransformListener()
 
     def diagCallback(self, data):
         for v in data.status[1].values:
@@ -167,13 +170,19 @@ class ColDetVis:
             m_id = 201
             for idx in links:
                 link = links[idx]
+                try:
+                    pose = self.listener.lookupTransform("world", link.name, rospy.Time(0))
+                except:
+                    continue
+                T_W_L = pm.fromTf(pose)
+
                 for g in link.geoms:
                     if g.type == "SPHERE":
-                        m_id = self.pub_marker.publishSinglePointMarker(PyKDL.Vector(), m_id, r=0, g=1, b=0, a=0.5, namespace='collision', frame_id=link.name, m_type=Marker.SPHERE, scale=Vector3(g.r*2, g.r*2, g.r*2), T=g.f)
+                        m_id = self.pub_marker.publishSinglePointMarker(PyKDL.Vector(), m_id, r=0, g=1, b=0, a=0.5, namespace='collision', frame_id="world", m_type=Marker.SPHERE, scale=Vector3(g.r*2, g.r*2, g.r*2), T=T_W_L*g.f)
                     if g.type == "CAPSULE":
-                        m_id = self.pub_marker.publishSinglePointMarker(PyKDL.Vector(0,0,-g.l/2), m_id, r=0, g=1, b=0, a=0.5, namespace='collision', frame_id=link.name, m_type=Marker.SPHERE, scale=Vector3(g.r*2, g.r*2, g.r*2), T=g.f)
-                        m_id = self.pub_marker.publishSinglePointMarker(PyKDL.Vector(0,0,g.l/2), m_id, r=0, g=1, b=0, a=0.5, namespace='collision', frame_id=link.name, m_type=Marker.SPHERE, scale=Vector3(g.r*2, g.r*2, g.r*2), T=g.f)
-                        m_id = self.pub_marker.publishSinglePointMarker(PyKDL.Vector(), m_id, r=0, g=1, b=0, a=0.5, namespace='collision', frame_id=link.name, m_type=Marker.CYLINDER, scale=Vector3(g.r*2, g.r*2, g.l), T=g.f)
+                        m_id = self.pub_marker.publishSinglePointMarker(PyKDL.Vector(0,0,-g.l/2), m_id, r=0, g=1, b=0, a=0.5, namespace='collision', frame_id="world", m_type=Marker.SPHERE, scale=Vector3(g.r*2, g.r*2, g.r*2), T=T_W_L*g.f)
+                        m_id = self.pub_marker.publishSinglePointMarker(PyKDL.Vector(0,0,g.l/2), m_id, r=0, g=1, b=0, a=0.5, namespace='collision', frame_id="world", m_type=Marker.SPHERE, scale=Vector3(g.r*2, g.r*2, g.r*2), T=T_W_L*g.f)
+                        m_id = self.pub_marker.publishSinglePointMarker(PyKDL.Vector(), m_id, r=0, g=1, b=0, a=0.5, namespace='collision', frame_id="world", m_type=Marker.CYLINDER, scale=Vector3(g.r*2, g.r*2, g.l), T=T_W_L*g.f)
             try:
                 rospy.sleep(0.1)
             except:
