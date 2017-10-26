@@ -1,5 +1,10 @@
 #!/usr/bin/env python
 
+## Shows collision objects and collisions between them.
+# @ingroup utilities
+# @file show_collisions.py
+# @namespace scripts.show_collisions Shows collision objects and collisions between them.
+
 # Copyright (c) 2015, Robot Control and Pattern Recognition Group,
 # Institute of Control and Computation Engineering
 # Warsaw University of Technology
@@ -45,7 +50,7 @@ import PyKDL
 from diagnostic_msgs.msg import *
 import tf_conversions.posemath as pm
 
-from ros_utils import marker_publisher
+from rcprg_ros_utils import marker_publisher
 
 class Geometry(object):
     def __init__(self, type_name):
