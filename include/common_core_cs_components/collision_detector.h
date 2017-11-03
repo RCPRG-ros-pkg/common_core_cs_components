@@ -442,44 +442,15 @@ void CollisionDetectorComponent<N, M, Npairs >::updateHook() {
         }
         t_out_.setZero();
         N_out_.setIdentity();
-
-        for (int idx = 0; idx < map_ign_idx_q_nr_.size(); ++idx) {
-            kin_model_->setIgnoredJointValue(map_ign_idx_q_nr_[idx].first, q_in_(map_ign_idx_q_nr_[idx].second));
-        }
-
-        for (int i = 0; i < M; ++i) {
-            q_(i) = q_in_(map_idx_q_nr_[i]);
-            articulated_dq_in_(i) = dq_in_(map_idx_q_nr_[i]);
-        }
-
-/*
-        for (int i = 0; i < N; ++i) {
-            bool articulated = false;
-            for (int j = 0; j < M; ++j) {
-                if (joint_names_[i] == articulated_joint_names_[j]) {
-                    articulated = true;
-                    q_(j) = q_in_(i);
-                    articulated_dq_in_(j) = dq_in_(i);
-                    break;
-                }
-            }
-            if (!articulated) {
-                kin_model_->setIgnoredJointValue(joint_names_[i], q_in_(i));
-            }
-        }
-*/
     }
-    else {
-        for (int i = 0; i < N; ++i) {
-//            q_(i) = q_in_(i);
-            for (int j = 0; j < M; ++j) {
-                if (joint_names_[i] == articulated_joint_names_[j]) {
-                    q_(j) = q_in_(i);
-                    articulated_dq_in_(j) = dq_in_(i);
-                    break;
-                }
-            }
-        }
+
+    for (int idx = 0; idx < map_ign_idx_q_nr_.size(); ++idx) {
+        kin_model_->setIgnoredJointValue(map_ign_idx_q_nr_[idx].first, q_in_(map_ign_idx_q_nr_[idx].second));
+    }
+
+    for (int i = 0; i < M; ++i) {
+        q_(i) = q_in_(map_idx_q_nr_[i]);
+        articulated_dq_in_(i) = dq_in_(map_idx_q_nr_[i]);
     }
 
     kin_model_->calculateFkAll(q_);
