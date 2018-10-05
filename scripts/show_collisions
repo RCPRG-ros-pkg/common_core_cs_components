@@ -2,7 +2,7 @@
 
 ## Shows collision objects and collisions between them.
 # @ingroup utilities
-# @file show_collisions.py
+# @file show_collisions
 # @namespace scripts.show_collisions Shows collision objects and collisions between them.
 
 # Copyright (c) 2015, Robot Control and Pattern Recognition Group,
@@ -97,7 +97,7 @@ class Collision:
 
 class ColDetVis:
     def __init__(self, subsystem_name, component_name):
-        self.pub_marker = marker_publisher.MarkerPublisher('/velma_markers')
+        self.pub_marker = marker_publisher.MarkerPublisher('/self_collisions')
         rospy.Subscriber("/" + subsystem_name + "/diag", DiagnosticArray, self.diagCallback)
         self.links = {}
         self.collisions_list = []
