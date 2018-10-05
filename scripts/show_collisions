@@ -96,18 +96,25 @@ class Collision:
         self.n2z = float(xml.getAttribute("n2z"))
 
 class ColDetVis:
-    def __init__(self, subsystem_name, component_name):
+    def __init__(self, subsystem_name, component_names):
         self.pub_marker = marker_publisher.MarkerPublisher('/self_collisions')
         rospy.Subscriber("/" + subsystem_name + "/diag", DiagnosticArray, self.diagCallback)
         self.links = {}
         self.collisions_list = []
-        self.component_name = component_name
+        self.component_names = component_names
         self.lock = threading.Lock()
         self.listener = tf.TransformListener()
 
     def diagCallback(self, data):
+        # first, determine which of the interesting components are currently running
+        running_component_names = []
+        for v in data.status[0].values:
+            if v.key in self.component_names and v.value == 'R':
+                running_component_names.append(v.key)
+
+        collisions_list = []
         for v in data.status[1].values:
-            if v.key == self.component_name:
+            if v.key in running_component_names:
                 dom = minidom.parseString(v.value)
                 cd = dom.getElementsByTagName("cd")
                 #col_count = cd[0].getAttribute("col_count")
@@ -115,10 +122,8 @@ class ColDetVis:
 
                 cols = cd[0].getElementsByTagName("c")
 
-                with self.lock:
-                    self.collisions_list = []
-                    for c in cols:
-                        self.collisions_list.append( Collision(c) )
+                for c in cols:
+                    collisions_list.append( Collision(c) )
 
                 links = cd[0].getElementsByTagName("l")
                 for l in links:
@@ -154,7 +159,8 @@ class ColDetVis:
                             self.links[idx].name = l.getAttribute("name")
                             self.links[idx].geoms = link_geoms
 
-                break
+        with self.lock:
+            self.collisions_list = collisions_list
 
     def spin(self):
         while not rospy.is_shutdown():
@@ -198,7 +204,7 @@ if __name__ == "__main__":
 
     try:
         subsystem_name = rospy.get_param("~subsystem_name")
-        component_name = rospy.get_param("~component_name")
+        component_names = rospy.get_param("~component_names").split()
     except KeyError as e:
         print "Some ROS parameters are not provided:"
         print e
@@ -206,7 +212,7 @@ if __name__ == "__main__":
 
     rospy.sleep(0.5)
 
-    cdv = ColDetVis(subsystem_name, component_name)
+    cdv = ColDetVis(subsystem_name, component_names)
 
     cdv.spin()
 
