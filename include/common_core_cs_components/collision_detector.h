@@ -328,7 +328,7 @@ bool CollisionDetectorComponent<N, M, Npairs >::configureHook() {
         this->ports()->addPort("t_OUTPORT", port_t_out_);
 
         if (Fmax_ <= 0.0) {
-            log(RTT::Error) << "Property \'Fmax\' is not set" << Logger::endl;
+            Logger::log() << Logger::Error << "Property \'Fmax\' is not set" << Logger::endl;
             return false;
         }
 
@@ -354,7 +354,7 @@ bool CollisionDetectorComponent<N, M, Npairs >::configureHook() {
             }
         }
         if (!found) {
-            log(RTT::Info) << "Could not find ignored joint '" << joint_name << "' in all joints list (probably it is ok)" << Logger::endl;
+            Logger::log() << Logger::Info << "Could not find ignored joint '" << joint_name << "' in all joints list (probably it is ok)" << Logger::endl;
             //return false;
         }
     }
@@ -384,7 +384,7 @@ bool CollisionDetectorComponent<N, M, Npairs >::configureHook() {
 
 
     if (activation_dist_ <= 0.0) {
-        log(RTT::Error) << "Property \'activation_dist\' is not set" << Logger::endl;
+        Logger::log() << Logger::Error << "Property \'activation_dist\' is not set" << Logger::endl;
         return false;
     }
 
@@ -418,14 +418,14 @@ void CollisionDetectorComponent<N, M, Npairs >::updateHook() {
     //
     if (port_q_in_.read(q_in_) != RTT::NewData) {
         Logger::In in("CollisionDetectorComponent::updateHook");
-        log(RTT::Error) << "no data on port " << port_q_in_.getName() << Logger::endl;
+        Logger::log() << Logger::Error << "no data on port " << port_q_in_.getName() << Logger::endl;
         error();
         return;
     }
 
     if (port_dq_in_.read(dq_in_) != RTT::NewData) {
         Logger::In in("CollisionDetectorComponent::updateHook");
-        log(RTT::Error) << "no data on port " << port_dq_in_.getName() << Logger::endl;
+        Logger::log() << Logger::Error << "no data on port " << port_dq_in_.getName() << Logger::endl;
         error();
         return;
     }
@@ -433,7 +433,7 @@ void CollisionDetectorComponent<N, M, Npairs >::updateHook() {
     if (calculate_forces_) {
         if (port_mInv_in_.read(mInv_in_) != RTT::NewData) {
             Logger::In in("CollisionDetectorComponent::updateHook");
-            log(RTT::Error) << "no data on port " << port_mInv_in_.getName() << Logger::endl;
+            Logger::log() << Logger::Error << "no data on port " << port_mInv_in_.getName() << Logger::endl;
             error();
             return;
         }
@@ -541,7 +541,6 @@ void CollisionDetectorComponent<N, M, Npairs >::updateHook() {
 
             double Frep = Fmax_ * f * f;
 
-//            std::cout << i << ", d: " << col_[i].dist << ", f: " << Frep << std::endl;
             double K = 2.0 * Fmax_ / (activation_dist_ * activation_dist_);
 
             // calculate collision mass (1 dof)
@@ -562,14 +561,11 @@ void CollisionDetectorComponent<N, M, Npairs >::updateHook() {
     }
 
     if (calculate_forces_) {
-        //std::cout << "a: " << t_out_.transpose() << std::endl;
         t_out_ += N_out_ * Nt_in_;  // apply null space torque
-        //std::cout << "b: " << t_out_.transpose() << std::endl;
         // apply simple damping
         for (int i = 0; i < M; ++i) {
             t_out_[i] -= damping_factors_[i] * articulated_dq_in_[i];
         }
-        //std::cout << "c: " << t_out_.transpose() << std::endl;
 
         port_t_out_.write(t_out_);
     }
