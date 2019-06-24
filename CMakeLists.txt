@@ -12,9 +12,6 @@ find_package(catkin REQUIRED COMPONENTS
   kin_dyn_model
   )
 
-find_package(OROCOS-RTT REQUIRED COMPONENTS rtt-scripting rtt-transport-corba)
-include(${OROCOS-RTT_USE_FILE_PATH}/UseOROCOS-RTT.cmake )
-
 find_package(Eigen3 REQUIRED)
 
 include_directories(${catkin_INCLUDE_DIRS} ${Eigen3_INCLUDE_DIRS})
