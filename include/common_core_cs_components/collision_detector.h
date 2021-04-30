@@ -82,6 +82,8 @@ private:
     CollisionList col_out_;
     RTT::OutputPort<CollisionList > port_col_out_;
 
+    RTT::InputPort<int > port_allow_hands_col_;
+
     // collision torques
     VectorM t_out_;
     RTT::OutputPort<VectorM > port_t_out_;
@@ -96,6 +98,7 @@ private:
     double activation_dist_;
     std::string robot_description_;
     std::string robot_semantic_description_;
+    std::string robot_semantic_description_no_hands_;
     std::vector<std::string > joint_names_;
     std::vector<std::string > articulated_joint_names_;
     bool calculate_forces_;
@@ -123,6 +126,10 @@ private:
     KinematicModel::Jacobian jac1_lin_, jac2_lin_;
 
     int diag_l_idx;
+
+    int full_srdf_id_;
+    int no_hands_srdf_id_;
+    bool allow_hands_col_;
 };
 
 template<unsigned int N, unsigned int M, unsigned int Npairs >
@@ -131,6 +138,7 @@ CollisionDetectorComponent<N, M, Npairs >::CollisionDetectorComponent(const std:
     , port_q_in_("q_INPORT")
     , port_dq_in_("dq_INPORT")
     , port_col_out_("col_OUTPORT")
+    , port_allow_hands_col_("allow_hands_col_INPORT")
     , activation_dist_(-1.0)
     , collisions_(0)
     , in_collision_(false)
@@ -141,14 +149,17 @@ CollisionDetectorComponent<N, M, Npairs >::CollisionDetectorComponent(const std:
     , calculate_forces_(false)
     , Fmax_(-1)
     , diag_l_idx(0)
+    , allow_hands_col_(false)
 {
     this->ports()->addPort(port_q_in_);
     this->ports()->addPort(port_dq_in_);
     this->ports()->addPort(port_col_out_);
+    this->ports()->addPort(port_allow_hands_col_);
 
     this->addProperty("activation_dist", activation_dist_);
     this->addProperty("robot_description", robot_description_);
     this->addProperty("robot_semantic_description", robot_semantic_description_);
+    this->addProperty("robot_semantic_description_no_hands", robot_semantic_description_no_hands_);
     this->addProperty("joint_names", joint_names_);
     this->addProperty("articulated_joint_names", articulated_joint_names_);
     this->addProperty("calculate_forces", calculate_forces_);
@@ -283,6 +294,11 @@ bool CollisionDetectorComponent<N, M, Npairs >::configureHook() {
         return false;
     }
 
+    if (!rosparam->getAbsolute("robot_semantic_description_no_hands")) {
+        Logger::log() << Logger::Error << "could not read ROS parameter \'robot_semantic_description_no_hands\'" << Logger::endl;
+        return false;
+    }
+
 /*
     RTT::OperationCaller<bool()> rosparam_getAbsolute = rosparam->getOperation("getAll");
     if (!tc_rosparam_getAll.ready()) {
@@ -377,7 +393,8 @@ bool CollisionDetectorComponent<N, M, Npairs >::configureHook() {
     q_.resize(M);
 
     col_model_ = self_collision::CollisionModel::parseURDF(robot_description_);
-    col_model_->parseSRDF(robot_semantic_description_);
+    full_srdf_id_ = col_model_->parseSRDF(robot_semantic_description_);
+    no_hands_srdf_id_ = col_model_->parseSRDF(robot_semantic_description_no_hands_);
     col_model_->generateCollisionPairs();
 
     links_fk_.resize(col_model_->getLinksCount());
@@ -430,6 +447,16 @@ void CollisionDetectorComponent<N, M, Npairs >::updateHook() {
         return;
     }
 
+    int allow_hands_col;
+    if (port_allow_hands_col_.read(allow_hands_col) == RTT::NewData) {
+        if (allow_hands_col == 0) {
+            allow_hands_col_ = false;
+        }
+        else {
+            allow_hands_col_ = true;
+        }
+    }
+
     if (calculate_forces_) {
         if (port_mInv_in_.read(mInv_in_) != RTT::NewData) {
             Logger::In in("CollisionDetectorComponent::updateHook");
@@ -460,7 +487,12 @@ void CollisionDetectorComponent<N, M, Npairs >::updateHook() {
         links_fk_[l_idx] = kin_model_->getFrame(col_model_->getLinkName(l_idx));
     }
 
-    getCollisionPairsNoAlloc(col_model_, links_fk_, activation_dist_, col_);
+    if (allow_hands_col_) {
+        getCollisionPairsNoAlloc(col_model_, no_hands_srdf_id_, links_fk_, activation_dist_, col_);
+    }
+    else {
+        getCollisionPairsNoAlloc(col_model_, full_srdf_id_, links_fk_, activation_dist_, col_);
+    }
 
     int collisions = 0;
     int col_out_idx = 0;
