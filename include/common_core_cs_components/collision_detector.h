@@ -97,8 +97,8 @@ private:
     // OROCOS properties
     double activation_dist_;
     std::string robot_description_;
-    std::string robot_semantic_description_;
-    std::string robot_semantic_description_no_hands_;
+    std::string robot_description_semantic_;
+    std::string robot_description_semantic_no_hands_;
     std::vector<std::string > joint_names_;
     std::vector<std::string > articulated_joint_names_;
     bool calculate_forces_;
@@ -158,8 +158,8 @@ CollisionDetectorComponent<N, M, Npairs >::CollisionDetectorComponent(const std:
 
     this->addProperty("activation_dist", activation_dist_);
     this->addProperty("robot_description", robot_description_);
-    this->addProperty("robot_semantic_description", robot_semantic_description_);
-    this->addProperty("robot_semantic_description_no_hands", robot_semantic_description_no_hands_);
+    this->addProperty("robot_description_semantic", robot_description_semantic_);
+    this->addProperty("robot_description_semantic_no_hands", robot_description_semantic_no_hands_);
     this->addProperty("joint_names", joint_names_);
     this->addProperty("articulated_joint_names", articulated_joint_names_);
     this->addProperty("calculate_forces", calculate_forces_);
@@ -289,13 +289,13 @@ bool CollisionDetectorComponent<N, M, Npairs >::configureHook() {
         return false;
     }
 
-    if (!rosparam->getAbsolute("robot_semantic_description")) {
-        Logger::log() << Logger::Error << "could not read ROS parameter \'robot_semantic_description\'" << Logger::endl;
+    if (!rosparam->getAbsolute("robot_description_semantic")) {
+        Logger::log() << Logger::Error << "could not read ROS parameter \'robot_description_semantic\'" << Logger::endl;
         return false;
     }
 
-    if (!rosparam->getAbsolute("robot_semantic_description_no_hands")) {
-        Logger::log() << Logger::Error << "could not read ROS parameter \'robot_semantic_description_no_hands\'" << Logger::endl;
+    if (!rosparam->getAbsolute("robot_description_semantic_no_hands")) {
+        Logger::log() << Logger::Error << "could not read ROS parameter \'robot_description_semantic_no_hands\'" << Logger::endl;
         return false;
     }
 
@@ -393,8 +393,8 @@ bool CollisionDetectorComponent<N, M, Npairs >::configureHook() {
     q_.resize(M);
 
     col_model_ = self_collision::CollisionModel::parseURDF(robot_description_);
-    full_srdf_id_ = col_model_->parseSRDF(robot_semantic_description_);
-    no_hands_srdf_id_ = col_model_->parseSRDF(robot_semantic_description_no_hands_);
+    full_srdf_id_ = col_model_->parseSRDF(robot_description_semantic_);
+    no_hands_srdf_id_ = col_model_->parseSRDF(robot_description_semantic_no_hands_);
     col_model_->generateCollisionPairs();
 
     links_fk_.resize(col_model_->getLinksCount());
