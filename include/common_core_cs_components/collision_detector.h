@@ -434,15 +434,15 @@ void CollisionDetectorComponent<N, M, Npairs >::updateHook() {
     // read HW status
     //
     if (port_q_in_.read(q_in_) != RTT::NewData) {
-        Logger::In in("CollisionDetectorComponent::updateHook");
-        Logger::log() << Logger::Error << "no data on port " << port_q_in_.getName() << Logger::endl;
+        //Logger::In in("CollisionDetectorComponent::updateHook");
+        //Logger::log() << Logger::Error << "no data on port " << port_q_in_.getName() << Logger::endl;
         error();
         return;
     }
 
     if (port_dq_in_.read(dq_in_) != RTT::NewData) {
-        Logger::In in("CollisionDetectorComponent::updateHook");
-        Logger::log() << Logger::Error << "no data on port " << port_dq_in_.getName() << Logger::endl;
+        //Logger::In in("CollisionDetectorComponent::updateHook");
+        //Logger::log() << Logger::Error << "no data on port " << port_dq_in_.getName() << Logger::endl;
         error();
         return;
     }
@@ -459,8 +459,8 @@ void CollisionDetectorComponent<N, M, Npairs >::updateHook() {
 
     if (calculate_forces_) {
         if (port_mInv_in_.read(mInv_in_) != RTT::NewData) {
-            Logger::In in("CollisionDetectorComponent::updateHook");
-            Logger::log() << Logger::Error << "no data on port " << port_mInv_in_.getName() << Logger::endl;
+            //Logger::In in("CollisionDetectorComponent::updateHook");
+            //Logger::log() << Logger::Error << "no data on port " << port_mInv_in_.getName() << Logger::endl;
             error();
             return;
         }
